@@ -2,9 +2,20 @@ import uscisScraper from './uscisScraper.js';
 import VisaRule from '../models/VisaRule.js';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Lazy initialization of OpenAI client
+let openai = null;
+
+const getOpenAIClient = () => {
+  if (!openai) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY environment variable is not set');
+    }
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
+  return openai;
+};
 
 class RuleExtractionService {
   /**
@@ -75,7 +86,7 @@ ${JSON.stringify(requirements.slice(0, 30), null, 2)}
 
 Return ONLY a valid JSON array of requirement objects, no other text.`;
 
-      const response = await openai.chat.completions.create({
+      const response = await getOpenAIClient().chat.completions.create({
         model: 'gpt-4',
         messages: [
           {

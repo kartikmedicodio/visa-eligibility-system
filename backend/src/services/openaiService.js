@@ -3,9 +3,20 @@ import fs from 'fs';
 import pdfParse from 'pdf-parse';
 import sharp from 'sharp';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Lazy initialization of OpenAI client
+let openai = null;
+
+const getOpenAIClient = () => {
+  if (!openai) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY environment variable is not set');
+    }
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
+  return openai;
+};
 
 class OpenAIService {
   /**
@@ -87,7 +98,7 @@ class OpenAIService {
 
 Extract all visible information. If a field is not found, use null or empty string.`;
 
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: 'gpt-4o',
       messages: [
         {
@@ -150,7 +161,7 @@ ${text.substring(0, 8000)}
 
 Extract all relevant information. If a field is not found, use null or empty string. Return ONLY valid JSON.`;
 
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: 'gpt-4',
       messages: [
         {

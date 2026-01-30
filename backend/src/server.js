@@ -1,5 +1,8 @@
-import express from 'express';
+// Load environment variables FIRST before any other imports
 import dotenv from 'dotenv';
+dotenv.config();
+
+import express from 'express';
 import cors from 'cors';
 import connectDB from './config/database.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -9,9 +12,6 @@ import documentsRoutes from './routes/documents.js';
 import applicationsRoutes from './routes/applications.js';
 import eligibilityRoutes from './routes/eligibility.js';
 import rulesRoutes from './routes/rules.js';
-
-// Load environment variables
-dotenv.config();
 
 // Connect to database
 connectDB();

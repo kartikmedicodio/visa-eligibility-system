@@ -39,3 +39,5 @@ Thumbs.db
 # MongoDB
 *.db
 
+backend/.env.backup
+backend/.env

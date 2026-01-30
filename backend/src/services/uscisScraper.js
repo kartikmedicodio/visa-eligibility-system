@@ -99,16 +99,62 @@ class USCISScraper {
       }
     });
     
-    // If no requirements found, extract main content sections
+    // Extract from main content area - look for eligibility-specific sections
+    const mainContent = $('main, article, .main-content, #main-content, .content-area');
+    
+    // Look for sections with eligibility keywords in headings
+    mainContent.find('h2, h3, h4').each((i, heading) => {
+      const headingText = $(heading).text().toLowerCase();
+      const eligibilitySectionKeywords = [
+        'eligibility', 'requirement', 'qualification', 'criteria',
+        'general requirement', 'who is eligible', 'qualify',
+        'must have', 'must be', 'must meet', 'must demonstrate'
+      ];
+      
+      if (eligibilitySectionKeywords.some(keyword => headingText.includes(keyword))) {
+        const section = $(heading).nextUntil('h1, h2, h3, h4');
+        section.find('p, li').each((j, item) => {
+          const text = $(item).text().trim();
+          if (text.length > 30 && text.length < 500) {
+            // Check if it's actually a requirement
+            const lowerText = text.toLowerCase();
+            if (lowerText.includes('must') || lowerText.includes('require') || 
+                lowerText.includes('need') || lowerText.includes('qualify') ||
+                lowerText.includes('degree') || lowerText.includes('experience') ||
+                lowerText.includes('employ') || lowerText.includes('job')) {
+              requirements.push({
+                description: text,
+                category: this.categorizeRequirement(text),
+                required: true
+              });
+            }
+          }
+        });
+      }
+    });
+    
+    // If still no requirements found, extract from main content but be more selective
     if (requirements.length === 0) {
-      $('main article, .content, #content').find('p, li').each((i, elem) => {
+      mainContent.find('p, li').each((i, elem) => {
         const text = $(elem).text().trim();
+        const lowerText = text.toLowerCase();
+        
+        // Only include if it contains requirement keywords
         if (text.length > 30 && text.length < 500) {
-          requirements.push({
-            description: text,
-            category: this.categorizeRequirement(text),
-            required: true
-          });
+          const hasRequirementKeyword = lowerText.includes('must') || 
+                                        lowerText.includes('require') ||
+                                        lowerText.includes('need') ||
+                                        lowerText.includes('qualify') ||
+                                        lowerText.includes('eligible') ||
+                                        lowerText.includes('criteria');
+          
+          if (hasRequirementKeyword) {
+            requirements.push({
+              description: text,
+              category: this.categorizeRequirement(text),
+              required: true
+            });
+          }
         }
       });
     }

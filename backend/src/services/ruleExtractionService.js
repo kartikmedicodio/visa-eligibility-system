@@ -1,5 +1,7 @@
 import uscisScraper from './uscisScraper.js';
 import VisaRule from '../models/VisaRule.js';
+import dataCleaner from './dataCleaner.js';
+import requirementOrganizer from './requirementOrganizer.js';
 import OpenAI from 'openai';
 
 // Lazy initialization of OpenAI client
@@ -37,18 +39,28 @@ class RuleExtractionService {
       // Scrape the page
       const scrapedData = await uscisScraper.scrapePage(url);
       
-      // Use OpenAI to structure the requirements better
+      // Clean and normalize the scraped requirements first
+      const cleanedRequirements = dataCleaner.clean(scrapedData.requirements);
+      
+      // Validate and set field mappings (CRITICAL for evaluation)
+      const requirementsWithFields = requirementOrganizer.validateFieldMappings(cleanedRequirements);
+      
+      // Use OpenAI to structure the cleaned requirements better
       const structuredRequirements = await this.structureRequirementsWithAI(
-        scrapedData.requirements,
+        requirementsWithFields,
         visaType
       );
+      
+      // Organize by sections for better structure
+      const requirementsBySection = requirementOrganizer.organizeBySection(structuredRequirements);
       
       // Store in database
       const visaRule = await VisaRule.findOneAndUpdate(
         { visaType: visaType.toUpperCase() },
         {
           visaType: visaType.toUpperCase(),
-          requirements: structuredRequirements,
+          requirements: structuredRequirements,  // Flat array for evaluation
+          requirementsBySection: requirementsBySection,  // Grouped by sections for display
           sourceUrl: url,
           rawContent: scrapedData.rawContent,
           lastUpdated: new Date(),
@@ -70,21 +82,40 @@ class RuleExtractionService {
    */
   async structureRequirementsWithAI(requirements, visaType) {
     try {
-      const prompt = `You are an immigration law expert. Analyze the following eligibility requirements for ${visaType} visa and structure them into a JSON array.
+      const prompt = `You are an immigration law expert. Analyze the following eligibility requirements for ${visaType} visa and structure them into a JSON object with a "requirements" array.
 
 For each requirement, extract:
 - category: education, employment, financial, documentation, experience, or general
-- description: clear, concise description
-- required: true/false
-- field: the data field this maps to (e.g., "educationLevel", "hasJobOffer", "yearsOfExperience")
+- description: clear, concise description (remove HTML, navigation items, keep only actual eligibility criteria)
+- required: true/false (true for "must", "required", "mandatory"; false for "preferred", "should")
+- field: the data field this maps to (e.g., "educationLevel", "hasJobOffer", "yearsOfExperience", "salary", "financialSupport")
 - operator: comparison operator if applicable (==, !=, >, <, >=, <=, includes, exists)
-- value: expected value if applicable
-- weight: importance weight (1-10)
+- value: expected value if applicable (e.g., "bachelor", 3, true)
+- weight: importance weight (1-10, where 10 is critical/mandatory)
+
+IMPORTANT:
+- Remove navigation items, menu items, and non-eligibility content
+- Only include actual eligibility requirements
+- Extract numeric values for years, salary amounts, etc.
+- Map education levels: "bachelor" or "bachelor's" -> "bachelor", "master" or "master's" -> "master"
 
 Requirements to analyze:
-${JSON.stringify(requirements.slice(0, 30), null, 2)}
+${JSON.stringify(requirements.slice(0, 40), null, 2)}
 
-Return ONLY a valid JSON array of requirement objects, no other text.`;
+Return ONLY a valid JSON object with this structure:
+{
+  "requirements": [
+    {
+      "category": "education",
+      "description": "Must have a bachelor's degree or equivalent",
+      "required": true,
+      "field": "educationLevel",
+      "operator": ">=",
+      "value": "bachelor",
+      "weight": 10
+    }
+  ]
+}`;
 
       const response = await getOpenAIClient().chat.completions.create({
         model: 'gpt-4',
@@ -112,12 +143,45 @@ Return ONLY a valid JSON array of requirement objects, no other text.`;
         if (jsonMatch) {
           parsed = JSON.parse(jsonMatch[0]);
         } else {
-          parsed = { requirements: requirements };
+          // Fallback: use cleaned requirements with basic structure
+          return requirements.map(req => ({
+            ...req,
+            field: req.field || null,
+            operator: req.operator || null,
+            value: req.value || null,
+            weight: req.weight || 1
+          }));
         }
       }
       
-      // Handle both array and object with array property
-      return parsed.requirements || parsed.array || (Array.isArray(parsed) ? parsed : requirements);
+      // Handle response structure
+      let finalRequirements = parsed.requirements || parsed.array || (Array.isArray(parsed) ? parsed : []);
+      
+      // If OpenAI didn't return requirements, use cleaned requirements
+      if (!finalRequirements || finalRequirements.length === 0) {
+        finalRequirements = requirements;
+      } else {
+        // Merge OpenAI structured data with cleaned requirements
+        // Prioritize: cleanedReq field mappings > OpenAI field mappings
+        finalRequirements = finalRequirements.map((aiReq, idx) => {
+          const cleanedReq = requirements[idx] || {};
+          return {
+            category: aiReq.category || cleanedReq.category || 'general',
+            description: cleanedReq.description || aiReq.description || '',
+            required: aiReq.required !== undefined ? aiReq.required : (cleanedReq.required !== undefined ? cleanedReq.required : true),
+            // Prioritize cleaned field mappings (they're more accurate)
+            field: cleanedReq.field || aiReq.field || null,
+            operator: cleanedReq.operator || aiReq.operator || null,
+            value: cleanedReq.value !== undefined ? cleanedReq.value : (aiReq.value !== undefined ? aiReq.value : null),
+            weight: aiReq.weight || cleanedReq.weight || 1
+          };
+        });
+      }
+      
+      // Final validation: ensure field mappings are set
+      finalRequirements = requirementOrganizer.validateFieldMappings(finalRequirements);
+      
+      return finalRequirements;
     } catch (error) {
       console.error('Error structuring requirements with AI:', error);
       // Fallback to basic structure
